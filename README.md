@@ -7,7 +7,9 @@ The aim was to capture frames from webcam with a definitive frames per second an
 
 Go to the main project where you're able to see client, server, docker folders. There run
 
-> docker-compose -f docker/docker-compose.yml up --build
+```bash
+docker-compose -f docker/docker-compose.yml up --build
+```
 
 With this command, the front end server will be up, with the help of NGINX and backend flask docker container along with the mongo db container as well.
 
