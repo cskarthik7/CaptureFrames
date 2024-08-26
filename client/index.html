@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Capture with Flask and SSE</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        video {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #007bff;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        #colorData {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 300px;
+        }
+        .color-item {
+            margin-bottom: 5px;
+        }
+        .color-box {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            border: 1px solid #000;
+        }
+        #statusMessage {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        #frameContainer {
+            margin-top: 20px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .frame-row {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+        .frame {
+            width: 200px; /* Set a fixed width for each frame */
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Webcam Capture</h2>
+    <video id="video" autoplay playsinline></video>
+    <label for="fpsInput">Frames Per Second (FPS):</label>
+    <input type="number" id="fpsInput" placeholder="FPS" value="5">
+    <label for="nInput">Frame Interval (N):</label>
+    <input type="number" id="nInput" placeholder="Frame Interval (N)" value="2">
+    <button id="setNButton">Set Frame Interval</button>
+    <button id="startButton">Start Capturing</button>
+    <button id="stopButton">Stop Capturing</button>
+    <div id="colorData">
+        <h3>RGB Colors</h3>
+        <div id="colorList"></div>
+        <h3>Color Difference</h3>
+        <div id="colorDifference"></div>
+    </div>
+    <div id="statusMessage"></div>
+
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <div id="frameContainer"></div> <!-- Container for displaying frames -->
+
+    <script>
+        // Function to generate a UUID
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        const clientId = generateUUID(); // Generate a unique client ID
+        console.log('Client ID:', clientId); // Log the generated client ID
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        let intervalId;
+
+        // Access the webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(error => {
+                console.error('Error accessing webcam:', error);
+            });
+
+        // Set frame interval
+        document.getElementById('setNButton').addEventListener('click', () => {
+            const n = parseInt(document.getElementById('nInput').value);
+            if (isNaN(n) || n <= 0) {
+                alert('Please enter a valid positive number for the frame interval.');
+                return;
+            }
+
+            fetch(`http://localhost:8080/set_frame_interval/${clientId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ n: n })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Server response:', data);
+                updateStatusMessage(data.message);
+            })
+            .catch(error => {
+                console.error('Error setting frame interval:', error);
+                updateStatusMessage('Error setting frame interval');
+            });
+        });
+
+        // Create EventSource for color data SSE
+        const colorSource = new EventSource(`http://localhost:8080/sse/color_data/${clientId}`);
+        colorSource.onmessage = (event) => {
+            const colorData = JSON.parse(event.data);
+            const colorList = document.getElementById('colorList');
+            const colorDifferenceDiv = document.getElementById('colorDifference');
+
+            // Clear previous color data
+            colorList.innerHTML = '';
+
+            // Display the RGB values
+            colorData.color_data.forEach((rgb, index) => {
+                colorList.innerHTML += `
+                    <div class="color-item">
+                        <div class="color-box" style="background-color: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]});"></div>
+                        <p>RGB(${rgb[0]}, ${rgb[1]}, ${rgb[2]})</p>
+                    </div>
+                `;
+            });
+
+            // Display color difference
+            if (colorData.color_difference) {
+                colorDifferenceDiv.innerHTML = `Color Difference: RGB(${colorData.color_difference[0]}, ${colorData.color_difference[1]}, ${colorData.color_difference[2]})`;
+            } else {
+                colorDifferenceDiv.innerHTML = 'Color Difference: N/A';
+            }
+        };
+
+        // Create EventSource for frame SSE
+        const frameSource = new EventSource(`http://localhost:8080/sse/frames/${clientId}`);
+        frameSource.onmessage = (event) => {
+            const img = new Image();
+            img.src = `data:image/jpeg;base64,${event.data}`; // Set the source to the Base64 image
+            img.className = 'frame'; // Add class for styling
+
+            // Create a new frame row if needed
+            const frameContainer = document.getElementById('frameContainer');
+            const frameRows = frameContainer.getElementsByClassName('frame-row');
+            let currentRow = frameRows[frameRows.length - 1];
+
+            if (!currentRow || currentRow.children.length === 5) {
+                currentRow = document.createElement('div');
+                currentRow.className = 'frame-row';
+                frameContainer.appendChild(currentRow);
+            }
+
+            // Append the new frame to the current row
+            currentRow.appendChild(img);
+        };
+
+        document.getElementById('startButton').addEventListener('click', () => {
+            const fps = parseInt(document.getElementById('fpsInput').value) || 5;
+            const captureDelay = 1000 / fps;
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            intervalId = setInterval(() => {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                const base64data = canvas.toDataURL('image/jpeg').split(',')[1];
+                console.log('Sending image:', base64data);
+
+                fetch(`http://localhost:8080/upload/${clientId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: base64data })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Server response:', data);
+                    updateStatusMessage('Image sent successfully');
+                })
+                .catch(error => {
+                    console.error('Error sending image:', error);
+                    updateStatusMessage('Error sending image');
+                });
+            }, captureDelay);
+        });
+
+        document.getElementById('stopButton').addEventListener('click', () => {
+            clearInterval(intervalId);
+            updateStatusMessage('Capturing stopped');
+        });
+
+        function updateStatusMessage(message) {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.textContent = message;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6-jammy
+    container_name: mongodb_cont
+    ports:
+      - '27017:27017'
+    volumes:
+      - dbdata:/data/db
+
+  frontend:
+    build:
+      context: ../client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"  # Frontend default port
+
+  backend:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    env_file:
+      - ../server/.env
+    ports:
+      - "8080:8080"
+
+volumes:
+  dbdata:
